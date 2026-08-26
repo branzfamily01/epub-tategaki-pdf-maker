@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from pypdf import PdfWriter
+from reportlab.pdfgen.canvas import Canvas
 from epub_tategaki.quality_check import inspect_pdf, create_sample_pdf, write_quality_report
 
 
@@ -11,14 +11,16 @@ class QualityCheckTest(unittest.TestCase):
         with TemporaryDirectory() as td:
             root = Path(td)
             src = root / "book.pdf"
-            writer = PdfWriter()
-            for _ in range(8):
-                writer.add_blank_page(width=300, height=420)
-            with src.open("wb") as f:
-                writer.write(f)
+            canvas = Canvas(str(src), pagesize=(300, 420))
+            for i in range(8):
+                canvas.drawString(30, 320, f"page {i + 1} sample text for quality check")
+                canvas.drawString(30, 290, "EPUB Tategaki PDF Maker test document")
+                canvas.showPage()
+            canvas.save()
+
             report = inspect_pdf(src)
             self.assertEqual(report.page_count, 8)
-            self.assertIn(report.status, {"OK", "CHECK"})
+            self.assertEqual(report.status, "OK")
             sample = create_sample_pdf(src, root / "sample.pdf", report.sampled_pages)
             self.assertTrue(sample.exists())
             out = write_quality_report(report, root / "quality.json")

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "title": "EPUB 縦書き PDF Maker",
+  "category": "Tools",
+  "summary": "日本語EPUBを右開きの縦書きPDFへ一括再組版し、完成PDFの品質チェックまで行うWindowsツール。",
+  "tags": ["EPUB", "PDF", "縦書き", "電子書籍", "Windows", "一括変換"],
+  "color": "blue",
+  "status": "active",
+  "visibility": "public",
+  "manualUrl": "https://branzfamily01.github.io/epub-tategaki-pdf-maker/manual.html"
+}

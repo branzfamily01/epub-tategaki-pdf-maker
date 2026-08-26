@@ -1,5 +1,13 @@
 from __future__ import annotations
-import csv, os, queue, shutil, subprocess, sys, threading
+
+import csv
+import os
+import queue
+import shutil
+import subprocess
+import sys
+import threading
+import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
@@ -7,17 +15,26 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from .epub_parser import open_epub
 from .renderer import RenderOptions, render_book
 from .presets import PRESETS, DEFAULT_PRESET
+from .quality_check import inspect_pdf, create_sample_pdf, write_quality_report
 
-APP_NAME = "EPUB 縦書き PDF Maker v2"
+APP_NAME = "EPUB 縦書き PDF Maker v2.1"
 SUPPORTED = {".epub"}
+
+
+def resource_path(name: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2]))
+    candidate = base / name
+    if candidate.exists():
+        return candidate
+    return Path(__file__).resolve().parents[2] / name
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("960x720")
-        self.minsize(820, 640)
+        self.geometry("980x760")
+        self.minsize(840, 660)
         self.items = []
         self.q = queue.Queue()
         self.running = False
@@ -29,11 +46,11 @@ class App(tk.Tk):
     def _build_ui(self):
         root = ttk.Frame(self, padding=18)
         root.pack(fill="both", expand=True)
-        ttk.Label(root, text=APP_NAME, font=("Yu Gothic UI", 20, "bold")).pack(anchor="w")
-        ttk.Label(
-            root,
-            text="電子書籍をキューに追加し、縦書きPDFへ一括変換します。処理はPC内だけで完結します。",
-        ).pack(anchor="w", pady=(3, 12))
+        header = ttk.Frame(root)
+        header.pack(fill="x")
+        ttk.Label(header, text=APP_NAME, font=("Yu Gothic UI", 20, "bold")).pack(side="left")
+        ttk.Button(header, text="？ 使い方", command=self.open_manual).pack(side="right")
+        ttk.Label(root, text="EPUBを追加すると、日本語書籍らしい縦書きPDFへ一括変換し、完成後に品質チェックまで行います。").pack(anchor="w", pady=(3, 12))
 
         toolbar = ttk.Frame(root)
         toolbar.pack(fill="x")
@@ -45,17 +62,15 @@ class App(tk.Tk):
 
         cols = ("title", "author", "file", "status")
         self.tree = ttk.Treeview(root, columns=cols, show="headings", height=11, selectmode="extended")
-        self.tree.heading("title", text="書名")
-        self.tree.heading("author", text="著者")
-        self.tree.heading("file", text="ファイル")
-        self.tree.heading("status", text="状態")
+        for key, label in [("title", "書名"), ("author", "著者"), ("file", "ファイル"), ("status", "状態")]:
+            self.tree.heading(key, text=label)
         self.tree.column("title", width=230)
         self.tree.column("author", width=150)
         self.tree.column("file", width=330)
-        self.tree.column("status", width=110)
+        self.tree.column("status", width=150)
         self.tree.pack(fill="both", expand=True, pady=(10, 12))
 
-        opts = ttk.LabelFrame(root, text="変換設定", padding=12)
+        opts = ttk.LabelFrame(root, text="変換設定（通常はこのままでOK）", padding=12)
         opts.pack(fill="x")
         row1 = ttk.Frame(opts)
         row1.pack(fill="x")
@@ -64,7 +79,6 @@ class App(tk.Tk):
         preset = ttk.Combobox(row1, textvariable=self.preset_var, values=list(PRESETS), state="readonly", width=20)
         preset.pack(side="left", padx=(8, 16))
         preset.bind("<<ComboboxSelected>>", self.apply_preset)
-
         ttk.Label(row1, text="用紙").pack(side="left")
         self.size_var = tk.StringVar(value="B6")
         ttk.Combobox(row1, textvariable=self.size_var, values=["B6", "A5", "A4"], width=7, state="readonly").pack(side="left", padx=(8, 16))
@@ -73,8 +87,10 @@ class App(tk.Tk):
         ttk.Spinbox(row1, from_=8.0, to=16.0, increment=.5, textvariable=self.font_var, width=6).pack(side="left", padx=(8, 16))
         self.cover_var = tk.BooleanVar(value=True)
         self.page_var = tk.BooleanVar(value=True)
+        self.quality_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(row1, text="表紙", variable=self.cover_var).pack(side="left")
         ttk.Checkbutton(row1, text="ページ番号", variable=self.page_var).pack(side="left", padx=10)
+        ttk.Checkbutton(row1, text="品質チェック", variable=self.quality_var).pack(side="left")
 
         row2 = ttk.Frame(opts)
         row2.pack(fill="x", pady=(10, 0))
@@ -94,10 +110,11 @@ class App(tk.Tk):
         self.status = ttk.Label(action, text="準備完了")
         self.status.pack(anchor="w")
 
+        ttk.Label(root, text="品質チェックではPDFの破損・ページ数・異常な空ページを確認し、代表6ページの確認用PDFも自動生成します。", foreground="#555").pack(anchor="w", pady=(8, 0))
         bottom = ttk.Frame(root)
         bottom.pack(fill="x", pady=(10, 0))
         ttk.Button(bottom, text="保存先を開く", command=self.open_output).pack(side="right")
-        ttk.Label(bottom, text="DRM・暗号化解除は行いません。", foreground="#666").pack(side="left")
+        ttk.Label(bottom, text="DRM・暗号化解除は行いません。書籍データはPC内だけで処理します。", foreground="#666").pack(side="left")
 
     def apply_preset(self, *_):
         p = PRESETS[self.preset_var.get()]
@@ -112,8 +129,7 @@ class App(tk.Tk):
         d = filedialog.askdirectory(title="EPUBを含むフォルダーを選択")
         if not d:
             return
-        paths = sorted(p for p in Path(d).rglob("*") if p.suffix.lower() in SUPPORTED)
-        self._add_paths(paths)
+        self._add_paths(sorted(p for p in Path(d).rglob("*") if p.suffix.lower() in SUPPORTED))
 
     def _add_paths(self, paths):
         existing = {x["path"].resolve() for x in self.items}
@@ -146,10 +162,9 @@ class App(tk.Tk):
         self._refresh_tree()
 
     def clear_files(self):
-        if self.running:
-            return
-        self.items.clear()
-        self._refresh_tree()
+        if not self.running:
+            self.items.clear()
+            self._refresh_tree()
 
     def edit_metadata(self):
         sel = self.tree.selection()
@@ -174,8 +189,7 @@ class App(tk.Tk):
             self.out_label.config(text=str(self.output_dir))
 
     def _safe_name(self, text):
-        bad = '<>:"/\\|?*'
-        for c in bad:
+        for c in '<>:"/\\|?*':
             text = text.replace(c, "_")
         return text.strip().rstrip(".") or "book"
 
@@ -189,12 +203,7 @@ class App(tk.Tk):
         self.running = True
         self.start_btn.config(state="disabled")
         self.progress["value"] = 0
-        self.run_options = {
-            "page_size": self.size_var.get(),
-            "font_size": float(self.font_var.get()),
-            "include_cover": bool(self.cover_var.get()),
-            "page_numbers": bool(self.page_var.get()),
-        }
+        self.run_options = {"page_size": self.size_var.get(), "font_size": float(self.font_var.get()), "include_cover": bool(self.cover_var.get()), "page_numbers": bool(self.page_var.get())}
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
@@ -221,20 +230,38 @@ class App(tk.Tk):
 
                 try:
                     pages = render_book(book, out, options, progress=progress)
-                    self.q.put(("item", (bi - 1, f"完成 {pages}p")))
-                    report.append([path.name, book.title, book.author, out.name, pages, "OK", ""])
+                    quality_status = "未実施"
+                    quality_json = ""
+                    preview_pdf = ""
+                    if self.quality_var.get():
+                        self.q.put(("status", f"{bi}/{total} 品質チェック中: {out.name}"))
+                        qr = inspect_pdf(out)
+                        quality_status = qr.status
+                        qdir = self.output_dir / "quality"
+                        qdir.mkdir(parents=True, exist_ok=True)
+                        quality_json_path = qdir / f"{out.stem}_quality.json"
+                        preview_path = qdir / f"{out.stem}_sample-pages.pdf"
+                        write_quality_report(qr, quality_json_path)
+                        create_sample_pdf(out, preview_path, qr.sampled_pages)
+                        quality_json = quality_json_path.name
+                        preview_pdf = preview_path.name
+                        state = f"完成 {pages}p / " + ("品質OK" if qr.status == "OK" else "要確認" if qr.status == "CHECK" else "品質エラー")
+                    else:
+                        state = f"完成 {pages}p"
+                    self.q.put(("item", (bi - 1, state)))
+                    report.append([path.name, book.title, book.author, out.name, pages, "OK", quality_status, quality_json, preview_pdf, ""])
                 except Exception as e:
                     self.q.put(("item", (bi - 1, "エラー")))
-                    report.append([path.name, book.title, book.author, "", 0, "ERROR", str(e)])
+                    report.append([path.name, book.title, book.author, "", 0, "ERROR", "ERROR", "", "", str(e)])
                 finally:
                     shutil.rmtree(book.workdir, ignore_errors=True)
 
             report_path = self.output_dir / "conversion-report.csv"
             with report_path.open("w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)
-                w.writerow(["source", "title", "author", "output", "pages", "status", "message"])
+                w.writerow(["source", "title", "author", "output", "pages", "status", "quality", "quality_report", "sample_pdf", "message"])
                 w.writerows(report)
-            self.q.put(("done", f"変換完了。レポート: {report_path.name}"))
+            self.q.put(("done", f"変換と品質チェックが完了しました。レポート: {report_path.name}"))
         except Exception as e:
             self.q.put(("error", str(e)))
 
@@ -274,6 +301,13 @@ class App(tk.Tk):
             subprocess.Popen(["open", str(self.output_dir)])
         else:
             subprocess.Popen(["xdg-open", str(self.output_dir)])
+
+    def open_manual(self):
+        manual = resource_path("manual.html")
+        if manual.exists():
+            webbrowser.open(manual.resolve().as_uri())
+        else:
+            webbrowser.open("https://branzfamily01.github.io/epub-tategaki-pdf-maker/manual.html")
 
 
 def main():

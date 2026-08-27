@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from pypdf import PdfReader, PdfWriter
+
+from .build_identity import BUILD_CUSTOMER_CODE, BUILD_EDITION
+from .license_config import LICENSE_CONFIG
 
 
 def stamp_license_metadata(
@@ -43,3 +48,24 @@ def stamp_license_metadata(
         tmp_path = Path(tmp.name)
         writer.write(tmp)
     tmp_path.replace(path)
+
+
+def stamp_cached_identity(pdf_path: str | Path) -> None:
+    """Read only non-personal identifiers from the local license cache and stamp them.
+
+    Authentication tokens and the account email are never copied into the PDF.
+    """
+    base = Path(os.environ.get("APPDATA") or (Path.home() / ".config")) / "EPUB-Tategaki-PDF-Maker"
+    state_path = base / "license-state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+    stamp_license_metadata(
+        pdf_path,
+        state.get("license") or {},
+        str(state.get("install_id") or ""),
+        LICENSE_CONFIG.app_version,
+        BUILD_CUSTOMER_CODE,
+        BUILD_EDITION,
+    )

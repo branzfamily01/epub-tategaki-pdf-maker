@@ -16,8 +16,11 @@ from .epub_parser import open_epub
 from .renderer import RenderOptions, render_book
 from .presets import PRESETS, DEFAULT_PRESET
 from .quality_check import inspect_pdf, create_sample_pdf, write_quality_report
+from .license_client import LicenseClient
+from .license_config import LICENSE_CONFIG, LICENSE_REQUIRED
+from .license_ui import ensure_license, LicenseDialog
 
-APP_NAME = "EPUB 縦書き PDF Maker v2.1"
+APP_NAME = "EPUB 縦書き PDF Maker v2.2"
 SUPPORTED = {".epub"}
 
 
@@ -33,15 +36,20 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("980x760")
-        self.minsize(840, 660)
+        self.geometry("1000x790")
+        self.minsize(860, 680)
         self.items = []
         self.q = queue.Queue()
         self.running = False
+        self.licensed = not LICENSE_REQUIRED
+        self.license_client = LicenseClient(LICENSE_CONFIG)
         self.output_dir = Path.home() / "Documents" / "EPUB縦書きPDF"
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._build_ui()
         self.after(100, self._poll)
+        if LICENSE_REQUIRED:
+            self.start_btn.config(state="disabled")
+            self.after(250, self._initial_license_check)
 
     def _build_ui(self):
         root = ttk.Frame(self, padding=18)
@@ -50,6 +58,9 @@ class App(tk.Tk):
         header.pack(fill="x")
         ttk.Label(header, text=APP_NAME, font=("Yu Gothic UI", 20, "bold")).pack(side="left")
         ttk.Button(header, text="？ 使い方", command=self.open_manual).pack(side="right")
+        ttk.Button(header, text="ライセンス", command=self.open_license).pack(side="right", padx=8)
+        self.license_status = ttk.Label(header, text="ライセンス：確認中", foreground="#555")
+        self.license_status.pack(side="right", padx=8)
         ttk.Label(root, text="EPUBを追加すると、日本語書籍らしい縦書きPDFへ一括変換し、完成後に品質チェックまで行います。").pack(anchor="w", pady=(3, 12))
 
         toolbar = ttk.Frame(root)
@@ -115,6 +126,29 @@ class App(tk.Tk):
         bottom.pack(fill="x", pady=(10, 0))
         ttk.Button(bottom, text="保存先を開く", command=self.open_output).pack(side="right")
         ttk.Label(bottom, text="DRM・暗号化解除は行いません。書籍データはPC内だけで処理します。", foreground="#666").pack(side="left")
+
+    def _initial_license_check(self):
+        allowed, label = ensure_license(self, self.license_client)
+        self.licensed = allowed
+        self.license_status.config(text=label, foreground="#176b2c" if allowed else "#a33")
+        self.start_btn.config(state="normal" if allowed else "disabled")
+        if not allowed:
+            self.status.config(text="ライセンス認証後に変換できます。")
+
+    def open_license(self):
+        dialog = LicenseDialog(self, self.license_client)
+        self.wait_window(dialog)
+        if dialog.result:
+            self.licensed = True
+            lic = self.license_client.cached_license
+            label = lic.get("customerCode") or lic.get("plan") or "有効"
+            self.license_status.config(text=f"ライセンス：{label}", foreground="#176b2c")
+            if not self.running:
+                self.start_btn.config(state="normal")
+        elif LICENSE_REQUIRED and not self.license_client.offline_grace_ok(7):
+            self.licensed = False
+            self.license_status.config(text="ライセンス：未認証", foreground="#a33")
+            self.start_btn.config(state="disabled")
 
     def apply_preset(self, *_):
         p = PRESETS[self.preset_var.get()]
@@ -195,6 +229,10 @@ class App(tk.Tk):
 
     def start(self):
         if self.running:
+            return
+        if LICENSE_REQUIRED and not self.licensed:
+            messagebox.showinfo(APP_NAME, "先にライセンス認証をしてください。")
+            self.open_license()
             return
         if not self.items:
             messagebox.showinfo(APP_NAME, "EPUBを追加してください。")
@@ -280,13 +318,13 @@ class App(tk.Tk):
                         self._refresh_tree()
                 elif kind == "done":
                     self.running = False
-                    self.start_btn.config(state="normal")
+                    self.start_btn.config(state="normal" if self.licensed else "disabled")
                     self.progress["value"] = 100
                     self.status.config(text=value)
                     messagebox.showinfo(APP_NAME, value)
                 elif kind == "error":
                     self.running = False
-                    self.start_btn.config(state="normal")
+                    self.start_btn.config(state="normal" if self.licensed else "disabled")
                     self.status.config(text="エラー")
                     messagebox.showerror(APP_NAME, value)
         except queue.Empty:
@@ -307,7 +345,7 @@ class App(tk.Tk):
         if manual.exists():
             webbrowser.open(manual.resolve().as_uri())
         else:
-            webbrowser.open("https://branzfamily01.github.io/epub-tategaki-pdf-maker/manual.html")
+            webbrowser.open("https://branzfamily01.github.io/my-hub/manuals/epub-tategaki-pdf-maker.html")
 
 
 def main():

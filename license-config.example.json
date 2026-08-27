@@ -1,0 +1,7 @@
+{
+  "enabled": false,
+  "supabaseUrl": "https://YOUR-PROJECT.supabase.co",
+  "publishableKey": "sb_publishable_REPLACE_ME",
+  "productSlug": "epub-tategaki-pdf-maker",
+  "appVersion": "2.2"
+}

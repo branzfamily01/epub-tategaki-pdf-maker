@@ -1,21 +1,39 @@
 # ライセンス基盤連携
 
-このアプリは将来の販売・限定配布に備えて、共通 License Platform へ接続できるクライアント層を持ちます。
+このアプリは将来の販売・限定配布に備えて、専用の Supabase License Platform へ接続しています。
 
-## 対応予定
+## 実装済み
 - Supabase Authによるユーザー登録・ログイン
 - ライセンスキー認証
-- 有効期限
+- ライセンス開始日・有効期限
 - 端末数制限
-- 端末解除
-- 更新権限の期限
-- 正規ライセンス向け最新版取得
+- 端末認証解除
+- 7日間のオフライン利用猶予
+- 更新権限期限（updates_until）
+- 正規ライセンス向け最新版取得API
+- 顧客コード・ライセンスID・install_idによる内部識別
+- 生成PDFへの非個人ライセンス識別情報の埋め込み
+- GitHub Actionsの顧客別ビルド入力
 
 ## 安全設計
-- デスクトップアプリにはService Role Keyを入れません。
-- アプリはSupabaseの公開用キーとユーザーJWTだけを使います。
-- ライセンスの判定はEdge Function側で行います。
-- 端末識別にはランダムなinstall_idを使い、過剰なハードウェア指紋採取を行いません。
+- デスクトップアプリには Service Role Key を入れません。
+- アプリは Supabase の publishable key とユーザーJWTだけを使います。
+- ライセンスの判定は JWT 必須の Edge Function 側で行います。
+- ライセンスキーはDBへ平文保存せず、SHA-256ハッシュを保存します。
+- 端末識別には初回起動時に生成するランダムな install_id を使い、ハードウェア指紋は採取しません。
+- EPUB本文と生成PDF本文はライセンスサーバーへ送信しません。
+- PDFへ埋め込む識別情報にメールアドレスや氏名は含めません。
 
-## 現在の状態
-`license-config.example.json` は未接続状態です。専用Supabaseプロジェクトを作成後、実URLとpublishable keyを設定し、UIのログイン・ライセンス入力画面を有効化します。
+## 配布区分
+My Hubでは表示範囲と配布形態を分離します。
+
+- visibility: public / limited / private
+- distribution: open / free / beta / commercial
+
+EPUB 縦書き PDF Maker は現在 `limited + beta`、販売予定として管理します。
+
+## 更新配布
+`latest-release` Edge Function は、有効なライセンスと更新権限を確認してから最新版情報を返します。実ファイルの恒久配布先は、GitHub ReleasesまたはCloudflare R2等の配布基盤を接続して運用します。
+
+## 顧客別ビルド
+GitHub Actions の `Build Windows EXE` を手動実行するときに `customer_code` と `edition` を指定すると、その値をEXE内部へ埋め込めます。通常顧客は共通EXE＋個別ライセンスを使い、学校・法人など必要な場合だけ顧客別ビルドを使う方針です。

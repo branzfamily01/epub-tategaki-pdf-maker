@@ -69,8 +69,6 @@ def open_epub(path: str | Path) -> EpubBook:
     with zipfile.ZipFile(path) as zf:
         if "META-INF/encryption.xml" in zf.namelist():
             enc = zf.read("META-INF/encryption.xml")
-            # Font obfuscation is common and does not necessarily protect text, but
-            # this MVP avoids any encrypted/obfuscated resources rather than bypassing protection.
             if b"EncryptedData" in enc:
                 raise EpubError("暗号化されたリソースを含むEPUBには対応していません。DRMのないEPUBを使用してください。")
         _safe_extract(zf, workdir)
@@ -153,7 +151,6 @@ def _is_booklike_cover(path: Path) -> bool:
 def _tokens_from_spine(files: Iterable[Path]) -> Iterable[Token]:
     for idx, path in enumerate(files):
         raw = path.read_bytes()
-        # BeautifulSoup handles encoding declarations in XHTML better than manual decoding.
         soup = BeautifulSoup(raw, "lxml")
         body = soup.body or soup
         if idx:
@@ -163,10 +160,12 @@ def _tokens_from_spine(files: Iterable[Path]) -> Iterable[Token]:
 
 def _walk(node, base: Path) -> Iterable[Token]:
     if isinstance(node, NavigableString):
-        text = str(node)
-        text = re.sub(r"[\t\r\n]+", "", text)
-        if text:
-            yield Token("text", text=text)
+        text = str(node).replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+        # HTML pretty-print indentation is not book content. Ignore whitespace-only
+        # nodes, while preserving tabs/newlines embedded in real text nodes.
+        if not re.search(r"\S", text):
+            return
+        yield Token("text", text=text)
         return
     if not isinstance(node, Tag):
         return
